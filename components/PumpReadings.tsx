@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { db } from "../lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { PUMPS } from "../lib/constants";
 
 export default function PumpReadings({ userName }: { userName: string }) {
-  const [pump, setPump] = useState("Pump 1 - 92 Petrol");
+  const [pump, setPump] = useState<string>(PUMPS[0]);
   const [reading, setReading] = useState("");
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
@@ -65,9 +66,9 @@ export default function PumpReadings({ userName }: { userName: string }) {
               onChange={(e) => setPump(e.target.value)}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-black"
             >
-              <option>Pump 1 - 92 Petrol</option>
-              <option>Pump 2 - Diesel</option>
-              <option>Pump 3 - Kerosene</option>
+              {PUMPS.map((p) => (
+                <option key={p}>{p}</option>
+              ))}
             </select>
           </div>
 

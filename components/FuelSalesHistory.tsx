@@ -121,8 +121,9 @@ export default function FuelSalesHistory({ refreshTrigger = 0, userRole }: { ref
     setSales(sortedData);
   };
 
-  // Determine if the current user has permission to see the delete button
-  const canDelete = userRole === "owner" || userRole === "manager";
+  // Spec: deleting historical records is OWNER-EXCLUSIVE.
+  // (The database rules enforce this too — this is only the UI layer.)
+  const canDelete = userRole === "owner";
 
   if (loading) {
     return <div className="p-4 text-center text-gray-500">Loading sales history...</div>;

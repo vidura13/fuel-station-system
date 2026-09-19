@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { db } from "../lib/firebase";
 import { collection, doc, getDoc, getDocs, query, where, orderBy, limit, updateDoc } from "firebase/firestore";
+import { FUEL_INVENTORY } from "../lib/constants";
 
 interface FuelData {
   id: string;
@@ -33,7 +34,7 @@ export default function FuelInventory() {
       const combinedData: FuelData[] = [];
 
       // Loop through each fuel type to get its price and latest dip
-      for (const fuel of fuelTypes) {
+      for (const fuel of FUEL_INVENTORY) {
         // 1. Get Price
         const priceDoc = await getDoc(doc(db, "fuel_prices", fuel.id));
         const price = priceDoc.exists() ? priceDoc.data().price : 0;

@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { db } from "../lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { TANKS } from "../lib/constants";
 
 export default function DailyDips({ userName }: { userName: string }) {
-  const [tank, setTank] = useState("Tank 1 - 92 Petrol");
+  const [tank, setTank] = useState<string>(TANKS[0]);
   const [dipLevel, setDipLevel] = useState("");
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
