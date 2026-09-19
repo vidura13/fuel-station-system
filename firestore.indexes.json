@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "daily_dips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tankName", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meter_readings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pumpName", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

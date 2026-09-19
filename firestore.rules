@@ -1,0 +1,218 @@
+rules_version = '2';
+
+// ============================================================================
+// FUEL STATION EMS — FIRESTORE SECURITY RULES
+// ----------------------------------------------------------------------------
+// Zero-trust enforcement at the DATABASE level. The React UI checks are for
+// UX only; these rules are what actually protects the data.
+//
+// Roles:  owner   — full access, exclusive delete rights
+//         manager — operational reads/writes, NO deletes
+//         worker  — morning dips & meter entries only (before 12:00 PM SLT)
+//
+// Time policy: dip/meter writes are rejected after 12:00 noon Sri Lanka time.
+// request.time is Firebase SERVER time (UTC) — a client cannot spoof it.
+// Sri Lanka is UTC+5:30 with no DST  →  12:00 SLT == 06:30 UTC.
+//
+// NOTE: entries in daily_dips / meter_readings are immutable (no updates).
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // Helper functions
+    // ------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Caller's role from their profile document users/{uid}
+    function role() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isOwner() {
+      return isSignedIn() && role() == 'owner';
+    }
+
+    function isManager() {
+      return isSignedIn() && role() == 'manager';
+    }
+
+    function isOwnerOrManager() {
+      return isOwner() || isManager();
+    }
+
+    // Verify the "enteredBy" field is the CALLER's own email — prevents
+    // staff attributing entries to someone else.
+    // REQUIRES: every users/{uid} doc has an "email" field matching the
+    // Firebase Auth email.
+    function isSelfAttributed(enteredBy) {
+      return enteredBy == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email;
+    }
+
+    // --- Sri Lanka time helpers -----------------------------------------
+    // request.time.hours()/minutes() are UTC (verified behaviour).
+    function slMinutesPastMidnight() {
+      return ((request.time.hours() * 60) + request.time.minutes() + 330) % 1440;
+    }
+
+    // True when the server time is before 12:00 noon Sri Lanka time
+    function beforeNoonSL() {
+      return slMinutesPastMidnight() < 720;
+    }
+
+    // 'YYYY-MM-DD' shape check for salesDate strings
+    function isDateStr(s) {
+      return s is string && s.matches('^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
+    }
+
+    // ------------------------------------------------------------------
+    // users — RBAC profiles
+    // Bootstrap: the very FIRST owner document must be created manually in
+    // the Firebase console (console operations bypass these rules).
+    // ------------------------------------------------------------------
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isOwner());
+      allow write: if isOwner();
+    }
+
+    // ------------------------------------------------------------------
+    // MODULE A — DAILY RECORDS
+    // Create-only ledgers. Locked after 12:00 PM Sri Lanka time BY THE DB.
+    // ------------------------------------------------------------------
+    match /daily_dips/{dipId} {
+      allow read: if isOwnerOrManager();
+      allow create: if isSignedIn()
+        && beforeNoonSL()
+        && request.resource.data.keys().hasOnly(['tankName', 'dipLevel', 'enteredBy', 'date'])
+        && request.resource.data.tankName in ['Tank 1 - 92 Petrol', 'Tank 2 - Diesel', 'Tank 3 - Kerosene']
+        && request.resource.data.dipLevel is number
+        && request.resource.data.dipLevel >= 0
+        && request.resource.data.dipLevel <= 100000
+        && isSelfAttributed(request.resource.data.enteredBy)
+        && request.resource.data.date == request.time;   // must use serverTimestamp()
+      allow update: if false;                            // entries are immutable
+      allow delete: if isOwner();                        // owner-exclusive purge
+    }
+
+    match /meter_readings/{readingId} {
+      allow read: if isOwnerOrManager();
+      allow create: if isSignedIn()
+        && beforeNoonSL()
+        && request.resource.data.keys().hasOnly(['pumpName', 'reading', 'enteredBy', 'date'])
+        && request.resource.data.pumpName in ['Pump 1 - 92 Petrol', 'Pump 2 - Diesel', 'Pump 3 - Kerosene']
+        && request.resource.data.reading is number
+        && request.resource.data.reading >= 0
+        && isSelfAttributed(request.resource.data.enteredBy)
+        && request.resource.data.date == request.time;
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    // ------------------------------------------------------------------
+    // MODULE B — SALES (financial records)
+    // Workers have NO access at all. Manager may create & correct,
+    // but CANNOT delete. Owner-exclusive deletes.
+    // ------------------------------------------------------------------
+    match /fuel_sales/{saleId} {
+      allow read: if isOwnerOrManager();
+      allow create: if isOwnerOrManager()
+        && request.resource.data.keys().hasOnly(['fuelType', 'quantity', 'salesDate', 'enteredBy', 'systemEntryDate'])
+        && request.resource.data.fuelType in ['92 Petrol', 'Diesel', 'Kerosene']
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.quantity <= 100000
+        && isDateStr(request.resource.data.salesDate)
+        && isSelfAttributed(request.resource.data.enteredBy)
+        && request.resource.data.systemEntryDate == request.time;
+      // Manager may correct only quantity / salesDate; identity fields frozen
+      allow update: if isOwnerOrManager()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'salesDate'])
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.quantity <= 100000
+        && isDateStr(request.resource.data.salesDate);
+      allow delete: if isOwner();
+    }
+
+    match /lubricant_sales/{saleId} {
+      allow read: if isOwnerOrManager();
+      allow create: if isOwnerOrManager()
+        && request.resource.data.keys().hasOnly(['productId', 'productName', 'quantity', 'salesDate', 'enteredBy', 'systemEntryDate'])
+        && request.resource.data.productId is string
+        && request.resource.data.productId.size() > 0
+        && request.resource.data.productName is string
+        && request.resource.data.productName.size() > 0
+        && request.resource.data.productName.size() <= 120
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.quantity <= 10000
+        && isDateStr(request.resource.data.salesDate)
+        && isSelfAttributed(request.resource.data.enteredBy)
+        && request.resource.data.systemEntryDate == request.time;
+      allow update: if isOwnerOrManager()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'salesDate'])
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.quantity <= 10000
+        && isDateStr(request.resource.data.salesDate);
+      allow delete: if isOwner();
+    }
+
+    // ------------------------------------------------------------------
+    // MODULE C — INVENTORY
+    // ------------------------------------------------------------------
+    match /fuel_prices/{fuelId} {
+      allow read: if isOwnerOrManager();
+      allow create: if isOwnerOrManager()
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0
+        && request.resource.data.price <= 1000000;
+      // Only the price value may ever change
+      allow update: if isOwnerOrManager()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['price'])
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0
+        && request.resource.data.price <= 1000000;
+      allow delete: if isOwner();
+    }
+
+    // Catalog schema is still evolving (Phase 4) — validate the core fields
+    // when present, tighten once the Phase 4 UI finalises field names.
+    match /lubricants_catalog/{productId} {
+      allow read: if isOwnerOrManager();
+      allow create, update: if isOwnerOrManager()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120
+        && (!('price' in request.resource.data) || (request.resource.data.price is number && request.resource.data.price >= 0))
+        && (!('stock' in request.resource.data) || (request.resource.data.stock is number && request.resource.data.stock >= 0))
+        && (!('quantity' in request.resource.data) || (request.resource.data.quantity is number && request.resource.data.quantity >= 0));
+      allow delete: if isOwner();
+    }
+
+    match /gas_cylinders/{cylinderId} {
+      allow read: if isOwnerOrManager();
+      allow create, update: if isOwnerOrManager()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120
+        && (!('price' in request.resource.data) || (request.resource.data.price is number && request.resource.data.price >= 0))
+        && (!('stock' in request.resource.data) || (request.resource.data.stock is number && request.resource.data.stock >= 0))
+        && (!('quantity' in request.resource.data) || (request.resource.data.quantity is number && request.resource.data.quantity >= 0));
+      allow delete: if isOwner();
+    }
+
+    // ------------------------------------------------------------------
+    // DEFAULT DENY — anything not matched above (incl. future
+    // salaries / debtors collections until we write their rules) is
+    // completely inaccessible from the client.
+    // ------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
