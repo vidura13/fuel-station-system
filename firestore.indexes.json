@@ -15,6 +15,14 @@
         { "fieldPath": "pumpName", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "fuel_sales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fuelType", "order": "ASCENDING" },
+        { "fieldPath": "salesDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

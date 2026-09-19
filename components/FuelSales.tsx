@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { db } from "../lib/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { FUEL_PRICE_IDS } from "../lib/constants";
 
 export default function FuelSales({ userName, onSuccess }: { userName: string; onSuccess?: () => void }) {
   // Automatically calculate yesterday's date for the default input
@@ -26,16 +27,29 @@ export default function FuelSales({ userName, onSuccess }: { userName: string; o
     setLoading(true);
 
     try {
+      // Snapshot the current pump price so this record keeps its financial
+      // value even when prices change later (audit fix #7)
+      const priceId = FUEL_PRICE_IDS[fuelType];
+      const priceSnap = priceId ? await getDoc(doc(db, "fuel_prices", priceId)) : null;
+      const unitPrice = priceSnap && priceSnap.exists() ? Number(priceSnap.data().price ?? 0) : 0;
+      const totalAmount = unitPrice * Number(quantity);
+
       await addDoc(collection(db, "fuel_sales"), {
         fuelType: fuelType,
         quantity: Number(quantity),
+        unitPrice,
+        totalAmount,
         salesDate: salesDate, // The day the sales actually happened
         enteredBy: userName,
         systemEntryDate: serverTimestamp(), // The exact moment they pressed submit
       });
       
-      setMessage("Success: Fuel sales recorded!");
-      setQuantity(""); 
+      setMessage(
+        unitPrice > 0
+          ? `Success: Fuel sales recorded! (Rs. ${totalAmount.toLocaleString()} @ Rs. ${unitPrice}/L)`
+          : "Success: Fuel sales recorded! (Note: no price set for this fuel — amount saved as Rs. 0. Set it under Inventory → Fuel Stock & Prices.)"
+      );
+      setQuantity("");
       if (onSuccess) onSuccess();
     } catch (error) {
       console.error("Detailed Error:", error);

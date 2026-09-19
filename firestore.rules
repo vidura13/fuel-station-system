@@ -119,29 +119,43 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     match /fuel_sales/{saleId} {
       allow read: if isOwnerOrManager();
+      // unitPrice/totalAmount are price SNAPSHOTS captured at entry time so
+      // historical revenue stays correct when pump prices change.
       allow create: if isOwnerOrManager()
-        && request.resource.data.keys().hasOnly(['fuelType', 'quantity', 'salesDate', 'enteredBy', 'systemEntryDate'])
+        && request.resource.data.keys().hasOnly(['fuelType', 'quantity', 'unitPrice', 'totalAmount', 'salesDate', 'enteredBy', 'systemEntryDate'])
         && request.resource.data.fuelType in ['92 Petrol', 'Diesel', 'Kerosene']
         && request.resource.data.quantity is number
         && request.resource.data.quantity > 0
         && request.resource.data.quantity <= 100000
+        && request.resource.data.unitPrice is number
+        && request.resource.data.unitPrice >= 0
+        && request.resource.data.unitPrice <= 1000000
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount >= 0
+        && request.resource.data.totalAmount <= 1000000000
         && isDateStr(request.resource.data.salesDate)
         && isSelfAttributed(request.resource.data.enteredBy)
         && request.resource.data.systemEntryDate == request.time;
-      // Manager may correct only quantity / salesDate; identity fields frozen
+      // Manager may correct quantity / salesDate / recomputed totalAmount;
+      // identity + price-per-unit fields frozen
       allow update: if isOwnerOrManager()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'salesDate'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'salesDate', 'totalAmount'])
         && request.resource.data.quantity is number
         && request.resource.data.quantity > 0
         && request.resource.data.quantity <= 100000
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount >= 0
         && isDateStr(request.resource.data.salesDate);
       allow delete: if isOwner();
     }
 
     match /lubricant_sales/{saleId} {
       allow read: if isOwnerOrManager();
+      // NOTE: when a sale is created, the client ALSO decrements the matching
+      // lubricants_catalog stock inside a transaction — the catalog update
+      // rule below validates that separately.
       allow create: if isOwnerOrManager()
-        && request.resource.data.keys().hasOnly(['productId', 'productName', 'quantity', 'salesDate', 'enteredBy', 'systemEntryDate'])
+        && request.resource.data.keys().hasOnly(['productId', 'productName', 'quantity', 'unitPrice', 'totalAmount', 'salesDate', 'enteredBy', 'systemEntryDate'])
         && request.resource.data.productId is string
         && request.resource.data.productId.size() > 0
         && request.resource.data.productName is string
@@ -150,14 +164,22 @@ service cloud.firestore {
         && request.resource.data.quantity is number
         && request.resource.data.quantity > 0
         && request.resource.data.quantity <= 10000
+        && request.resource.data.unitPrice is number
+        && request.resource.data.unitPrice >= 0
+        && request.resource.data.unitPrice <= 1000000
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount >= 0
+        && request.resource.data.totalAmount <= 1000000000
         && isDateStr(request.resource.data.salesDate)
         && isSelfAttributed(request.resource.data.enteredBy)
         && request.resource.data.systemEntryDate == request.time;
       allow update: if isOwnerOrManager()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'salesDate'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'salesDate', 'totalAmount'])
         && request.resource.data.quantity is number
         && request.resource.data.quantity > 0
         && request.resource.data.quantity <= 10000
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount >= 0
         && isDateStr(request.resource.data.salesDate);
       allow delete: if isOwner();
     }
